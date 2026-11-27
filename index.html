@@ -69,6 +69,14 @@
       background: #0d131d; border: 1px solid var(--border); border-radius: 8px;
       padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;
     }
+    .mpg-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px;
+    }
+    .mpg-stat {
+      background: #0d131d; border: 1px solid var(--border); border-radius: 8px; padding: 9px 8px; text-align: center;
+    }
+    .mpg-stat-lbl { font-size: 0.66rem; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+    .mpg-stat-val { font-size: 1.02rem; font-weight: 900; color: var(--green); margin-top: 2px; }
     .badge { font-size: 0.7rem; padding: 3px 8px; border-radius: 6px; font-weight: 700; white-space: nowrap; }
     .badge-new { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
     .badge-sent { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
@@ -87,7 +95,7 @@
       <div class="logo">TSR</div>
       <div>
         <div class="title">Pocket Fuel Logger</div>
-        <div class="sub">OFFLINE QUEUE + AUTO CLOUD DEPOT</div>
+        <div class="sub">OFFLINE QUEUE + FLEET MPG HISTORY</div>
       </div>
     </div>
     <span id="cloudStatusBadge" class="badge badge-sent">☁️ Cloud Ready</span>
@@ -176,6 +184,29 @@
     </form>
   </div>
 
+  <!-- VEHICLE MPG & PAST FILL-UP HISTORY (FROM TSR FLEET DEPOT) -->
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px;">
+      <div class="card-title" style="margin:0;" id="mpgHistoryTitle">📊 Vehicle MPG History</div>
+      <button type="button" class="btn btn-secondary" style="width:auto; padding:5px 10px; font-size:0.74rem;" onclick="fetchFleetFuelHistory(true)">🔄 Refresh</button>
+    </div>
+    <div class="mpg-grid">
+      <div class="mpg-stat">
+        <div class="mpg-stat-lbl">Overall MPG</div>
+        <div class="mpg-stat-val" id="histAvgMpg">--</div>
+      </div>
+      <div class="mpg-stat">
+        <div class="mpg-stat-lbl">Best Tank</div>
+        <div class="mpg-stat-val" style="color:var(--cyan);" id="histBestMpg">--</div>
+      </div>
+      <div class="mpg-stat">
+        <div class="mpg-stat-lbl">Last Tank</div>
+        <div class="mpg-stat-val" style="color:#fbbf24;" id="histLastMpg">--</div>
+      </div>
+    </div>
+    <div id="fleetMpgHistoryList"></div>
+  </div>
+
   <!-- CLOUD DEPOT & BACKUP SYNC -->
   <div class="card">
     <div class="card-title">☁️ TSR Cloud Depot Sync</div>
@@ -223,24 +254,27 @@
 
     const FIREBASE_DB_URL = "https://tsr-fleet-sync-default-rtdb.firebaseio.com";
     const STORAGE_KEY = "tsr_pocket_fuel_v1";
+    const HISTORY_CACHE_KEY = "tsr_fleet_fuel_history_cache_v1";
     let memoryBackup = [];
 
-    function readStorage() {
+    function readStorage(key = STORAGE_KEY, fallback = []) {
       try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+        const val = localStorage.getItem(key);
+        return val ? JSON.parse(val) : fallback;
       } catch (e) {
-        return memoryBackup;
+        return key === STORAGE_KEY ? memoryBackup : fallback;
       }
     }
 
-    function writeStorage(data) {
-      memoryBackup = data;
+    function writeStorage(data, key = STORAGE_KEY) {
+      if (key === STORAGE_KEY) memoryBackup = data;
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        localStorage.setItem(key, JSON.stringify(data));
       } catch (e) {}
     }
 
-    let pocketLogs = readStorage();
+    let pocketLogs = readStorage(STORAGE_KEY, []);
+    let fleetHistoryCache = readStorage(HISTORY_CACHE_KEY, { updatedAt: null, fuelLogs: [], vehicleMeters: {} });
 
     function showToast(msg) {
       const el = document.getElementById("toastMsg");
@@ -261,14 +295,14 @@
       const val = document.getElementById("p_vehicle").value;
       const [vId, , defaultGrade] = val.split("|");
       document.getElementById("p_grade").value = defaultGrade || "87 Regular";
-      const today = document.getElementById("p_date").value;
-      const prevToday = pocketLogs.find(x => x.vehicleId === vId && x.date === today && !x.sent);
-      if (prevToday) {
-        document.getElementById("p_meter").value = prevToday.meter;
-        if (!document.getElementById("p_station").value) {
-          document.getElementById("p_station").value = prevToday.station || "";
-        }
-      }
+
+      // Hint the last known odometer for this vehicle from TSR history or local logs
+      const histVeh = (fleetHistoryCache.vehicleMeters || {})[vId];
+      const localLatest = pocketLogs.find(x => x.vehicleId === vId);
+      const lastMeter = Math.max(Number(histVeh?.meter) || 0, Number(localLatest?.meter) || 0);
+      document.getElementById("p_meter").placeholder = lastMeter > 0 ? `Last: ${lastMeter.toLocaleString()}` : "e.g. 200150";
+
+      renderMpgHistory();
     }
 
     function autoCalcTotal() {
@@ -294,6 +328,138 @@
       baseEntry.splitCount = swipeCount;
       baseEntry.sent = false;
       return baseEntry;
+    }
+
+    async function fetchFleetFuelHistory(manual = false) {
+      if (!navigator.onLine) {
+        if (manual) showToast("Offline — showing saved MPG history on phone.");
+        return;
+      }
+      try {
+        const resp = await fetch(`${FIREBASE_DB_URL}/fleetFuelHistory.json`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (data && Array.isArray(data.fuelLogs)) {
+          fleetHistoryCache = data;
+          writeStorage(fleetHistoryCache, HISTORY_CACHE_KEY);
+          onVehicleChange();
+          if (manual) showToast(`Synced ${data.fuelLogs.length} historical fill-ups from TSR!`);
+        } else if (manual) {
+          showToast("Open TSR on your computer & click Sync Drive File to publish history.");
+        }
+      } catch (e) {
+        if (manual) showToast("Could not reach cloud depot right now.");
+      }
+    }
+
+    function renderMpgHistory() {
+      const val = document.getElementById("p_vehicle").value;
+      const [vId, nickname] = val.split("|");
+      document.getElementById("mpgHistoryTitle").innerText = `📊 ${nickname} (${vId}) — Past MPG History`;
+
+      const histMeta = (fleetHistoryCache.vehicleMeters || {})[vId];
+      const isHours = histMeta && histMeta.metric === "Hours";
+
+      // Combine TSR desktop history + any local phone logs not yet merged into desktop history
+      const baseLogs = (fleetHistoryCache.fuelLogs || []).filter(x => x.vehicleId === vId);
+      const localLogs = pocketLogs.filter(x => x.vehicleId === vId);
+
+      const combined = [...baseLogs];
+      localLogs.forEach(loc => {
+        const dup = combined.some(ex =>
+          (loc.syncId && ex.syncId === loc.syncId) ||
+          (ex.date === loc.date && Math.abs((Number(ex.meter) || 0) - (Number(loc.meter) || 0)) < 0.05 && Math.abs((Number(ex.gallons) || 0) - (Number(loc.gallons) || 0)) < 0.005)
+        );
+        if (!dup) combined.push(loc);
+      });
+
+      const listEl = document.getElementById("fleetMpgHistoryList");
+      if (combined.length === 0) {
+        document.getElementById("histAvgMpg").innerText = "--";
+        document.getElementById("histBestMpg").innerText = "--";
+        document.getElementById("histLastMpg").innerText = "--";
+        listEl.innerHTML = `<div style="text-align:center; color:var(--muted); font-size:0.8rem; padding:12px;">No past fill-ups synced for ${nickname} yet. Open TSR on your computer once to sync history.</div>`;
+        return;
+      }
+
+      // Sort oldest -> newest to compute exact Full-Tank-to-Full-Tank MPG
+      const asc = [...combined].sort((a, b) => {
+        const mDiff = (Number(a.meter) || 0) - (Number(b.meter) || 0);
+        if (mDiff !== 0) return mDiff;
+        return new Date(a.date) - new Date(b.date);
+      });
+
+      let firstFullMeter = null;
+      let lastFullMeter = null;
+      let anchorMeter = null;
+      let pendingGal = 0;
+      let totalVerifiedGal = 0;
+      const mpgValues = [];
+
+      const annotated = asc.map(entry => {
+        const meter = Number(entry.meter) || 0;
+        const gal = Number(entry.gallons) || 0;
+        const isFull = entry.fullTank !== undefined ? !!entry.fullTank : true;
+        let mpg = null;
+        let tag = isFull ? "Baseline Full" : "Partial";
+
+        if (!isHours) {
+          if (anchorMeter === null) {
+            if (isFull && meter > 0) {
+              anchorMeter = meter;
+              firstFullMeter = meter;
+              lastFullMeter = meter;
+            }
+          } else {
+            pendingGal += gal;
+            if (isFull) {
+              const segMiles = meter - anchorMeter;
+              if (segMiles > 0 && pendingGal > 0) {
+                mpg = segMiles / pendingGal;
+                tag = `${mpg.toFixed(2)} MPG`;
+                mpgValues.push(mpg);
+                totalVerifiedGal += pendingGal;
+                lastFullMeter = meter;
+              } else {
+                tag = "Full Tank";
+              }
+              anchorMeter = meter;
+              pendingGal = 0;
+            } else {
+              tag = "Partial Fill";
+            }
+          }
+        } else {
+          tag = `${gal.toFixed(2)} gal`;
+        }
+        return { ...entry, mpg, tag };
+      });
+
+      if (!isHours && firstFullMeter !== null && lastFullMeter !== null && lastFullMeter > firstFullMeter && totalVerifiedGal > 0) {
+        const overall = (lastFullMeter - firstFullMeter) / totalVerifiedGal;
+        document.getElementById("histAvgMpg").innerText = overall.toFixed(2);
+      } else {
+        document.getElementById("histAvgMpg").innerText = isHours ? "Hours" : "--";
+      }
+
+      document.getElementById("histBestMpg").innerText = mpgValues.length > 0 ? Math.max(...mpgValues).toFixed(2) : "--";
+      document.getElementById("histLastMpg").innerText = mpgValues.length > 0 ? mpgValues[mpgValues.length - 1].toFixed(2) : "--";
+
+      // Show newest 8 fill-ups
+      const recent = annotated.reverse().slice(0, 8);
+      listEl.innerHTML = recent.map(r => `
+        <div class="log-item" style="padding:8px 10px; margin-bottom:6px;">
+          <div>
+            <div style="font-weight:700; font-size:0.85rem;">
+              ${r.date} • ${Number(r.meter).toLocaleString()} ${isHours ? "hrs" : "mi"}
+            </div>
+            <div style="font-size:0.75rem; color:var(--muted);">
+              ${Number(r.gallons).toFixed(2)} gal @ $${Number(r.pricePerGal || 0).toFixed(3)} = $${Number(r.cost || 0).toFixed(2)}${r.station ? ` • ${r.station}` : ""}
+            </div>
+          </div>
+          <span class="badge ${r.mpg !== null ? 'badge-sent' : 'badge-new'}" style="font-size:0.75rem;">${r.tag}</span>
+        </div>
+      `).join("");
     }
 
     async function syncQueueToCloud(manualTrigger = false) {
@@ -331,6 +497,7 @@
 
       writeStorage(pocketLogs);
       renderLogs();
+      renderMpgHistory();
 
       const stillPending = pocketLogs.filter(x => !x.sent).length;
       if (stillPending === 0) {
@@ -387,6 +554,7 @@
       document.getElementById("p_fullTank").checked = true;
       document.getElementById("p_combinePrev").checked = false;
 
+      onVehicleChange();
       renderLogs();
       showToast(toastText);
       await syncQueueToCloud(false);
@@ -407,6 +575,7 @@
         pocketLogs.splice(idx, 1);
         writeStorage(pocketLogs);
         renderLogs();
+        renderMpgHistory();
         showToast(`Combined: ${merged.gallons} gal ($${merged.cost.toFixed(2)})`);
         if (navigator.onLine && removedSyncId) {
           fetch(`${FIREBASE_DB_URL}/fuelLogs/${encodeURIComponent(removedSyncId)}.json`, { method: "DELETE" }).catch(() => {});
@@ -473,6 +642,7 @@
         pocketLogs.splice(idx, 1);
         writeStorage(pocketLogs);
         renderLogs();
+        renderMpgHistory();
       }
     }
 
@@ -523,12 +693,16 @@
     onVehicleChange();
     renderLogs();
 
-    window.addEventListener("online", () => syncQueueToCloud(false));
+    window.addEventListener("online", () => {
+      syncQueueToCloud(false);
+      fetchFleetFuelHistory(false);
+    });
     window.addEventListener("offline", () => {
       const pending = pocketLogs.filter(x => !x.sent).length;
       updateCloudBadge(pending > 0 ? `📴 Offline (${pending} queued)` : "📴 Offline Ready", false);
     });
     syncQueueToCloud(false);
+    fetchFleetFuelHistory(false);
 
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
