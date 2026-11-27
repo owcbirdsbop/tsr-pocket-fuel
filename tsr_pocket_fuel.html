@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>TSR Pocket Fuel Logger</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --card: #151d2a;
+      --border: #243347;
+      --accent: #2563eb;
+      --cyan: #06b6d4;
+      --green: #10b981;
+      --amber: #f59e0b;
+      --red: #ef4444;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    body { background: var(--bg); color: var(--text); padding: 14px; max-width: 540px; margin: 0 auto; padding-bottom: 40px; }
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      background: #0f1622; border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px 14px; margin-bottom: 14px;
+    }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .logo {
+      background: linear-gradient(135deg, #b91c1c, #ea580c);
+      color: #fff; font-weight: 900; padding: 5px 9px; border-radius: 7px; letter-spacing: 1px; font-size: 0.9rem;
+    }
+    .title { font-weight: 800; font-size: 1.05rem; }
+    .sub { font-size: 0.72rem; color: var(--cyan); font-weight: 700; }
+    .card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px; margin-bottom: 14px;
+    }
+    .card-title { font-size: 0.85rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; color: var(--cyan); margin-bottom: 10px; }
+    .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    label { font-size: 0.75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; }
+    input, select {
+      width: 100%; background: #0b0f17; border: 1px solid var(--border); border-radius: 8px;
+      color: #fff; padding: 12px; font-size: 1rem;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    .check-row {
+      display: flex; align-items: center; gap: 10px; background: #0d131d;
+      border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 14px; cursor: pointer;
+    }
+    .check-row input { width: 22px; height: 22px; accent-color: var(--green); }
+    .btn {
+      width: 100%; border: none; border-radius: 10px; padding: 14px; font-size: 1rem;
+      font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-green { background: #059669; color: #fff; }
+    .btn-secondary { background: #222f42; color: #f1f5f9; padding: 10px; font-size: 0.88rem; }
+    .btn-danger { background: #7f1d1d; color: #fecaca; padding: 6px 10px; font-size: 0.78rem; width: auto; border-radius: 6px; }
+    .sync-box {
+      background: #0d131d; border: 1px solid #1e3a5f; border-radius: 10px; padding: 12px;
+    }
+    .sync-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .log-item {
+      background: #0d131d; border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    }
+    .badge { font-size: 0.7rem; padding: 2px 7px; border-radius: 5px; font-weight: 700; }
+    .badge-new { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+    .badge-sent { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+    .toast {
+      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+      background: #059669; color: #fff; padding: 10px 18px; border-radius: 999px;
+      font-weight: 700; font-size: 0.9rem; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+      display: none; z-index: 99; white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <div class="brand">
+      <div class="logo">TSR</div>
+      <div>
+        <div class="title">Pocket Fuel Logger</div>
+        <div class="sub">OFFLINE PUMP ENTRY • SYNC TO TSR</div>
+      </div>
+    </div>
+    <span id="unsyncedCountBadge" class="badge badge-new">0 Unsent</span>
+  </div>
+
+  <!-- PUMP ENTRY FORM -->
+  <div class="card">
+    <div class="card-title">⛽ Log Fuel Fill-Up</div>
+    <form id="fuelForm" onsubmit="savePocketFuel(event)">
+      <div class="field">
+        <label>Vehicle</label>
+        <select id="p_vehicle" onchange="onVehicleChange()" required>
+          <option value="TRK-01|Bosco|Diesel">Bosco — 1999 Ford F-250 7.3L (TRK-01)</option>
+          <option value="CAR-01|Caila|87 Regular">Caila — 2024 Subaru Crosstrek (CAR-01)</option>
+          <option value="MOTO-01|The Deadwood|91 Premium">The Deadwood — 2026 HD Deadwood (MOTO-01)</option>
+          <option value="MOTO-02|Ninja 500|87 Regular">Ninja 500 — 2025 Kawasaki Ninja 500 (MOTO-02)</option>
+          <option value="DIRT-01|Dust Kicker|91 Premium">Dust Kicker — 2026 Kawasaki KLX 140RL (DIRT-01)</option>
+          <option value="UTV-01|The Ranger|87 Regular">The Ranger — Polaris Ranger UTV (UTV-01)</option>
+          <option value="ATV-01|The 850 Ultimate|87 Regular">The 850 Ultimate — Polaris Sportsman 850 (ATV-01)</option>
+          <option value="MOW-01|Hustler 60|87 Regular">Hustler 60 — ZTR 60" Mower (MOW-01)</option>
+          <option value="MOW-02|Hustler 52|87 Regular">Hustler 52 — ZTR 52" Mower (MOW-02)</option>
+          <option value="MOW-03|Hustler 36|87 Regular">Hustler 36 — ZTR 36" Mower (MOW-03)</option>
+        </select>
+      </div>
+
+      <div class="row-2">
+        <div class="field">
+          <label>Date</label>
+          <input type="date" id="p_date" required>
+        </div>
+        <div class="field">
+          <label>Odometer / Hours</label>
+          <input type="number" step="0.1" inputmode="decimal" id="p_meter" placeholder="e.g. 200150" required>
+        </div>
+      </div>
+
+      <div class="row-2">
+        <div class="field">
+          <label>Gallons</label>
+          <input type="number" step="0.001" inputmode="decimal" id="p_gallons" placeholder="e.g. 28.450" oninput="autoCalcTotal()" required>
+        </div>
+        <div class="field">
+          <label>Price / Gal ($)</label>
+          <input type="number" step="0.001" inputmode="decimal" id="p_ppg" placeholder="e.g. 3.499" oninput="autoCalcTotal()" required>
+        </div>
+      </div>
+
+      <div class="row-2">
+        <div class="field">
+          <label>Total Cost ($)</label>
+          <input type="number" step="0.01" inputmode="decimal" id="p_cost" placeholder="0.00" required>
+        </div>
+        <div class="field">
+          <label>Fuel Grade</label>
+          <select id="p_grade">
+            <option value="Diesel">Diesel #2</option>
+            <option value="87 Regular">87 Regular</option>
+            <option value="91 Premium">91 Premium</option>
+            <option value="Premix">2-Stroke Pre-Mix</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Station / Location</label>
+        <input type="text" id="p_station" placeholder="e.g. Casey's, QuikTrip, Kwik Trip">
+      </div>
+
+      <label class="check-row" style="margin-bottom:8px;">
+        <input type="checkbox" id="p_fullTank" checked>
+        <div>
+          <div style="font-weight:800; font-size:0.9rem;">Full Tank Fill-Up</div>
+          <div style="font-size:0.74rem; color:var(--muted);">Keep checked when filled to shutoff for exact MPG</div>
+        </div>
+      </label>
+
+      <label class="check-row" style="border-color:#1e3a5f; background:#0b1320;">
+        <input type="checkbox" id="p_combinePrev">
+        <div>
+          <div style="font-weight:800; font-size:0.9rem; color:var(--cyan);">🔗 2nd Pump Swipe (Combine with Last Fill-Up)</div>
+          <div style="font-size:0.74rem; color:var(--muted);">Check if card maxed out at $100 and this is the 2nd swipe at the same stop</div>
+        </div>
+      </label>
+
+      <button type="submit" class="btn btn-primary">💾 Save Fill-Up to Phone</button>
+    </form>
+  </div>
+
+  <!-- SYNC TO MAIN TSR -->
+  <div class="card">
+    <div class="card-title">📲 Send / Sync to Main TSR</div>
+    <div class="sync-box">
+      <p style="font-size:0.82rem; color:var(--muted); line-height:1.45;">
+        Tap <strong>Share / Text Sync Code</strong> or <strong>Copy Sync Code</strong> and text it to John—or tap <strong>Download Sync File</strong> to save a tiny <code>.json</code> file. TSR automatically skips duplicates!
+      </p>
+      <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+        <button type="button" class="btn btn-green" onclick="shareSyncCode()">📤 Share / Text Sync Code</button>
+        <div class="sync-actions">
+          <button type="button" class="btn btn-secondary" onclick="copySyncCode()">📋 Copy Sync Code</button>
+          <button type="button" class="btn btn-secondary" onclick="downloadSyncJSON()">📁 Download .JSON</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SAVED LOGS ON PHONE -->
+  <div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <div class="card-title" style="margin:0;">Saved Entries on This Phone (<span id="logCount">0</span>)</div>
+      <button type="button" class="btn btn-secondary" style="width:auto; padding:5px 10px; font-size:0.75rem;" onclick="markAllSent()">✓ Mark All Sent</button>
+    </div>
+    <div id="pocketLogList"></div>
+  </div>
+
+  <div class="toast" id="toastMsg">Saved!</div>
+
+  <script>
+    const STORAGE_KEY = "tsr_pocket_fuel_v1";
+    let pocketLogs = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+
+    function showToast(msg) {
+      const el = document.getElementById("toastMsg");
+      el.innerText = msg;
+      el.style.display = "block";
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => { el.style.display = "none"; }, 2600);
+    }
+
+    function onVehicleChange() {
+      const val = document.getElementById("p_vehicle").value;
+      const [vId, , defaultGrade] = val.split("|");
+      document.getElementById("p_grade").value = defaultGrade || "87 Regular";
+      const today = document.getElementById("p_date").value;
+      const prevToday = pocketLogs.find(x => x.vehicleId === vId && x.date === today && !x.sent);
+      if (prevToday) {
+        document.getElementById("p_meter").value = prevToday.meter;
+        if (!document.getElementById("p_station").value) {
+          document.getElementById("p_station").value = prevToday.station || "";
+        }
+      }
+    }
+
+    function autoCalcTotal() {
+      const gal = parseFloat(document.getElementById("p_gallons").value) || 0;
+      const ppg = parseFloat(document.getElementById("p_ppg").value) || 0;
+      if (gal > 0 && ppg > 0) {
+        document.getElementById("p_cost").value = (gal * ppg).toFixed(2);
+      }
+    }
+
+    function mergeTwoPocketEntries(baseEntry, addEntry) {
+      const totalGal = Number(((Number(baseEntry.gallons) || 0) + (Number(addEntry.gallons) || 0)).toFixed(3));
+      const totalCost = Number(((Number(baseEntry.cost) || 0) + (Number(addEntry.cost) || 0)).toFixed(2));
+      const weightedPpg = totalGal > 0 ? Number((totalCost / totalGal).toFixed(3)) : Number(addEntry.pricePerGal || baseEntry.pricePerGal || 0);
+      const swipeCount = (baseEntry.splitCount || 1) + (addEntry.splitCount || 1);
+
+      baseEntry.gallons = totalGal;
+      baseEntry.cost = totalCost;
+      baseEntry.pricePerGal = weightedPpg;
+      baseEntry.meter = Math.max(Number(baseEntry.meter) || 0, Number(addEntry.meter) || 0);
+      baseEntry.fullTank = !!addEntry.fullTank;
+      baseEntry.station = addEntry.station || baseEntry.station;
+      baseEntry.splitCount = swipeCount;
+      baseEntry.sent = false;
+      return baseEntry;
+    }
+
+    function savePocketFuel(e) {
+      e.preventDefault();
+      const [vehicleId, nickname] = document.getElementById("p_vehicle").value.split("|");
+      const entryDate = document.getElementById("p_date").value;
+      const entryMeter = Number(document.getElementById("p_meter").value);
+      const wantCombine = document.getElementById("p_combinePrev").checked;
+
+      const entry = {
+        syncId: "TSR-F-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6).toUpperCase(),
+        vehicleId,
+        nickname,
+        date: entryDate,
+        meter: entryMeter,
+        gallons: Number(document.getElementById("p_gallons").value),
+        pricePerGal: Number(document.getElementById("p_ppg").value),
+        cost: Number(document.getElementById("p_cost").value),
+        grade: document.getElementById("p_grade").value,
+        station: document.getElementById("p_station").value.trim(),
+        fullTank: document.getElementById("p_fullTank").checked,
+        splitCount: 1,
+        sent: false
+      };
+
+      // Look for an existing unsent entry for the same vehicle on the same date (or same odometer)
+      const matchingIdx = pocketLogs.findIndex(x =>
+        x.vehicleId === vehicleId &&
+        !x.sent &&
+        (wantCombine || (x.date === entryDate && Math.abs((Number(x.meter) || 0) - entryMeter) <= 1))
+      );
+
+      let toastText = `Saved ${entry.gallons} gal for ${nickname}!`;
+      if (matchingIdx !== -1 && (wantCombine || confirm(`Combine this ${entry.gallons} gal ($${entry.cost.toFixed(2)}) swipe with ${nickname}'s earlier ${pocketLogs[matchingIdx].gallons} gal ($${Number(pocketLogs[matchingIdx].cost).toFixed(2)}) swipe into ONE combined fill-up?`))) {
+        const merged = mergeTwoPocketEntries(pocketLogs[matchingIdx], entry);
+        toastText = `Combined into 1 entry: ${merged.gallons} gal ($${merged.cost.toFixed(2)})!`;
+      } else {
+        pocketLogs.unshift(entry);
+      }
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(pocketLogs));
+
+      // Keep selected vehicle & date, clear numeric fields
+      document.getElementById("p_meter").value = "";
+      document.getElementById("p_gallons").value = "";
+      document.getElementById("p_ppg").value = "";
+      document.getElementById("p_cost").value = "";
+      document.getElementById("p_station").value = "";
+      document.getElementById("p_fullTank").checked = true;
+      document.getElementById("p_combinePrev").checked = false;
+
+      renderLogs();
+      showToast(toastText);
+    }
+
+    function combineWithPreviousLog(idx) {
+      // Combine pocketLogs[idx] with the next older entry for the same vehicle
+      const newer = pocketLogs[idx];
+      if (!newer) return;
+      const olderIdx = pocketLogs.findIndex((item, i) => i > idx && item.vehicleId === newer.vehicleId);
+      if (olderIdx === -1) {
+        alert(`No earlier entry found for ${newer.nickname || newer.vehicleId} to combine with.`);
+        return;
+      }
+      const older = pocketLogs[olderIdx];
+      if (confirm(`Combine these two ${newer.nickname || newer.vehicleId} pump swipes into ONE entry?
+
+• Swipe 1: ${older.gallons} gal ($${Number(older.cost).toFixed(2)})
+• Swipe 2: ${newer.gallons} gal ($${Number(newer.cost).toFixed(2)})`)) {
+        const merged = mergeTwoPocketEntries(older, newer);
+        pocketLogs.splice(idx, 1);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(pocketLogs));
+        renderLogs();
+        showToast(`Combined: ${merged.gallons} gal ($${merged.cost.toFixed(2)})`);
+      }
+    }
+
+    function buildSyncPayload() {
+      const unsent = pocketLogs.filter(x => !x.sent);
+      const listToSend = unsent.length > 0 ? unsent : pocketLogs;
+      return {
+        tsrMobileSync: 1,
+        exportedAt: new Date().toISOString(),
+        fuelLogs: listToSend.map(({ sent, ...rest }) => rest)
+      };
+    }
+
+    function buildSyncText() {
+      const payload = buildSyncPayload();
+      const summaryLines = payload.fuelLogs.map(l =>
+        `• ${l.nickname || l.vehicleId} (${l.date}): ${l.gallons} gal @ $${Number(l.pricePerGal).toFixed(3)} = $${Number(l.cost).toFixed(2)} | Odo: ${l.meter} (${l.fullTank ? "Full" : "Partial"})`
+      );
+      return `TSR FUEL SYNC (${payload.fuelLogs.length} fill-up${payload.fuelLogs.length === 1 ? "" : "s"}):
+` +
+        summaryLines.join("
+") +
+        `
+
+TSR_SYNC_BEGIN
+${JSON.stringify(payload)}
+TSR_SYNC_END`;
+    }
+
+    function markAllSent() {
+      pocketLogs.forEach(x => x.sent = true);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(pocketLogs));
+      renderLogs();
+      showToast("All entries marked as sent");
+    }
+
+    async function shareSyncCode() {
+      if (pocketLogs.length === 0) {
+        alert("No fill-ups saved on this phone yet.");
+        return;
+      }
+      const text = buildSyncText();
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: "TSR Fuel Sync", text });
+          markAllSent();
+          return;
+        } catch (err) {
+          if (err && err.name === "AbortError") return;
+        }
+      }
+      copySyncCode();
+    }
+
+    function copySyncCode() {
+      if (pocketLogs.length === 0) {
+        alert("No fill-ups saved on this phone yet.");
+        return;
+      }
+      const text = buildSyncText();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          markAllSent();
+          showToast("Sync code copied! Paste into text message.");
+        });
+      } else {
+        prompt("Copy this sync message:", text);
+        markAllSent();
+      }
+    }
+
+    function downloadSyncJSON() {
+      if (pocketLogs.length === 0) {
+        alert("No fill-ups saved on this phone yet.");
+        return;
+      }
+      const payload = buildSyncPayload();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `tsr_mobile_fuel_${new Date().toISOString().split("T")[0]}.json`;
+      a.click();
+      markAllSent();
+      showToast("Sync JSON downloaded!");
+    }
+
+    function deletePocketLog(idx) {
+      if (confirm("Delete this entry from your phone?")) {
+        pocketLogs.splice(idx, 1);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(pocketLogs));
+        renderLogs();
+      }
+    }
+
+    function renderLogs() {
+      const list = document.getElementById("pocketLogList");
+      const unsentCount = pocketLogs.filter(x => !x.sent).length;
+      document.getElementById("logCount").innerText = pocketLogs.length;
+      const badge = document.getElementById("unsyncedCountBadge");
+      badge.innerText = `${unsentCount} Unsent`;
+      badge.className = unsentCount > 0 ? "badge badge-new" : "badge badge-sent";
+
+      if (pocketLogs.length === 0) {
+        list.innerHTML = `<div style="text-align:center; color:var(--muted); font-size:0.84rem; padding:16px;">No fuel entries logged yet.</div>`;
+        return;
+      }
+      list.innerHTML = pocketLogs.map((l, idx) => {
+        const hasOlderSameVeh = pocketLogs.some((other, i) => i > idx && other.vehicleId === l.vehicleId);
+        const splitBadge = (l.splitCount && l.splitCount > 1)
+          ? `<span class="badge" style="background:rgba(6,182,212,0.18); color:#22d3ee; border:1px solid rgba(6,182,212,0.35); margin-left:4px;">${l.splitCount} Swipes Combined</span>`
+          : "";
+        return `
+        <div class="log-item">
+          <div>
+            <div style="font-weight:800; font-size:0.92rem;">
+              ${l.nickname || l.vehicleId} • ${l.date}
+              <span class="badge ${l.sent ? 'badge-sent' : 'badge-new'}" style="margin-left:4px;">${l.sent ? 'Sent' : 'Unsent'}</span>
+              ${splitBadge}
+            </div>
+            <div style="font-size:0.78rem; color:var(--muted); margin-top:2px;">
+              ${l.gallons} gal @ $${Number(l.pricePerGal).toFixed(3)} = <strong style="color:#fff;">$${Number(l.cost).toFixed(2)}</strong> • Meter: ${Number(l.meter).toLocaleString()} (${l.fullTank ? 'Full' : 'Partial'})
+            </div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center;">
+            ${hasOlderSameVeh ? `<button type="button" class="btn btn-secondary" style="width:auto; padding:6px 8px; font-size:0.74rem; color:#22d3ee;" onclick="combineWithPreviousLog(${idx})" title="Merge this swipe with the previous entry for this vehicle">🔗 Merge</button>` : ""}
+            <button type="button" class="btn btn-danger" onclick="deletePocketLog(${idx})">✕</button>
+          </div>
+        </div>
+      `;
+      }).join("");
+    }
+
+    // Initialize today's date & default grade
+    document.getElementById("p_date").value = new Date().toISOString().split("T")[0];
+    onVehicleChange();
+    renderLogs();
+  </script>
+</body>
+</html>
