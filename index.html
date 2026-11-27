@@ -205,6 +205,14 @@
   <div class="toast" id="toastMsg">Saved!</div>
 
   <script>
+    function getLocalTodayISO() {
+      const now = new Date();
+      const y = now.getFullYear();
+      const m = String(now.getMonth() + 1).padStart(2, "0");
+      const d = String(now.getDate()).padStart(2, "0");
+      return `${y}-${m}-${d}`;
+    }
+
     const FIREBASE_DB_URL = "https://tsr-fleet-sync-default-rtdb.firebaseio.com";
     const STORAGE_KEY = "tsr_pocket_fuel_v1";
     let memoryBackup = [];
@@ -499,7 +507,7 @@
       }).join("");
     }
 
-    document.getElementById("p_date").value = new Date().toISOString().split("T")[0];
+    document.getElementById("p_date").value = getLocalTodayISO();
     onVehicleChange();
     renderLogs();
 
