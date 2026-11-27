@@ -1,4 +1,4 @@
-const CACHE_NAME = "tsr-pocket-fuel-v4";
+const CACHE_NAME = "tsr-pocket-fuel-v5";
 const ASSETS = ["/", "/index.html", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
