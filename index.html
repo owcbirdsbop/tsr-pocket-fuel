@@ -26,7 +26,7 @@
     .header {
       display: flex; align-items: center; justify-content: space-between;
       background: #0f1622; border: 1px solid var(--border); border-radius: 12px;
-      padding: 12px 14px; margin-bottom: 14px;
+      padding: 12px 14px; margin-bottom: 14px; gap: 8px;
     }
     .brand { display: flex; align-items: center; gap: 10px; }
     .logo {
@@ -69,7 +69,7 @@
       background: #0d131d; border: 1px solid var(--border); border-radius: 8px;
       padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;
     }
-    .badge { font-size: 0.7rem; padding: 2px 7px; border-radius: 5px; font-weight: 700; }
+    .badge { font-size: 0.7rem; padding: 3px 8px; border-radius: 6px; font-weight: 700; white-space: nowrap; }
     .badge-new { background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
     .badge-sent { background: rgba(16, 185, 129, 0.18); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
     .toast {
@@ -87,10 +87,10 @@
       <div class="logo">TSR</div>
       <div>
         <div class="title">Pocket Fuel Logger</div>
-        <div class="sub">OFFLINE PUMP ENTRY • SYNC TO TSR</div>
+        <div class="sub">OFFLINE QUEUE + AUTO CLOUD DEPOT</div>
       </div>
     </div>
-    <span id="unsyncedCountBadge" class="badge badge-new">0 Unsent</span>
+    <span id="cloudStatusBadge" class="badge badge-sent">☁️ Cloud Ready</span>
   </div>
 
   <!-- PUMP ENTRY FORM -->
@@ -172,22 +172,22 @@
         </div>
       </label>
 
-      <button type="submit" class="btn btn-primary">💾 Save Fill-Up to Phone</button>
+      <button type="submit" class="btn btn-primary">💾 Save & Auto-Sync to TSR Cloud</button>
     </form>
   </div>
 
-  <!-- SYNC TO MAIN TSR -->
+  <!-- CLOUD DEPOT & BACKUP SYNC -->
   <div class="card">
-    <div class="card-title">📲 Send / Sync to Main TSR</div>
+    <div class="card-title">☁️ TSR Cloud Depot Sync</div>
     <div class="sync-box">
       <p style="font-size:0.82rem; color:var(--muted); line-height:1.45;">
-        Tap <strong>Share / Text Sync Code</strong> or <strong>Copy Sync Code</strong> and text it to John—or tap <strong>Download Sync File</strong> to save a tiny <code>.json</code> file. TSR automatically skips duplicates!
+        Entries upload automatically to your <strong>TSR Cloud Depot</strong> whenever you have signal—and queue safely on this phone when offline until signal returns.
       </p>
       <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
-        <button type="button" class="btn btn-green" onclick="shareSyncCode()">📤 Share / Text Sync Code</button>
+        <button type="button" class="btn btn-green" onclick="syncQueueToCloud(true)">☁️ Sync Pending to Cloud Now</button>
         <div class="sync-actions">
-          <button type="button" class="btn btn-secondary" onclick="copySyncCode()">📋 Copy Sync Code</button>
-          <button type="button" class="btn btn-secondary" onclick="downloadSyncJSON()">📁 Download .JSON</button>
+          <button type="button" class="btn btn-secondary" onclick="shareSyncCode()">📤 Text Backup</button>
+          <button type="button" class="btn btn-secondary" onclick="copySyncCode()">📋 Copy Code</button>
         </div>
       </div>
     </div>
@@ -197,7 +197,7 @@
   <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
       <div class="card-title" style="margin:0;">Saved Entries on This Phone (<span id="logCount">0</span>)</div>
-      <button type="button" class="btn btn-secondary" style="width:auto; padding:5px 10px; font-size:0.75rem;" onclick="markAllSent()">✓ Mark All Sent</button>
+      <span id="unsyncedCountBadge" class="badge badge-new">0 Queued</span>
     </div>
     <div id="pocketLogList"></div>
   </div>
@@ -205,6 +205,7 @@
   <div class="toast" id="toastMsg">Saved!</div>
 
   <script>
+    const FIREBASE_DB_URL = "https://tsr-fleet-sync-default-rtdb.firebaseio.com";
     const STORAGE_KEY = "tsr_pocket_fuel_v1";
     let memoryBackup = [];
 
@@ -220,9 +221,7 @@
       memoryBackup = data;
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-      } catch (e) {
-        // Fallback to in-memory array if storage is restricted
-      }
+      } catch (e) {}
     }
 
     let pocketLogs = readStorage();
@@ -232,7 +231,14 @@
       el.innerText = msg;
       el.style.display = "block";
       clearTimeout(window._toastTimer);
-      window._toastTimer = setTimeout(() => { el.style.display = "none"; }, 2600);
+      window._toastTimer = setTimeout(() => { el.style.display = "none"; }, 2800);
+    }
+
+    function updateCloudBadge(stateText, isGood) {
+      const el = document.getElementById("cloudStatusBadge");
+      if (!el) return;
+      el.innerText = stateText;
+      el.className = isGood ? "badge badge-sent" : "badge badge-new";
     }
 
     function onVehicleChange() {
@@ -274,7 +280,53 @@
       return baseEntry;
     }
 
-    function savePocketFuel(e) {
+    async function syncQueueToCloud(manualTrigger = false) {
+      const pending = pocketLogs.filter(x => !x.sent);
+      if (pending.length === 0) {
+        updateCloudBadge(navigator.onLine ? "☁️ All Synced" : "📴 Offline Ready", navigator.onLine);
+        if (manualTrigger) showToast("All entries are already in the cloud!");
+        return;
+      }
+
+      if (!navigator.onLine) {
+        updateCloudBadge(`📴 Offline (${pending.length} queued)`, false);
+        if (manualTrigger) showToast("Offline — will auto-upload when signal returns!");
+        return;
+      }
+
+      updateCloudBadge("⏳ Syncing...", false);
+      let syncedCount = 0;
+
+      for (const item of pending) {
+        const { sent, ...cleanPayload } = item;
+        cleanPayload.updatedAt = new Date().toISOString();
+        try {
+          const resp = await fetch(`${FIREBASE_DB_URL}/fuelLogs/${encodeURIComponent(item.syncId)}.json`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(cleanPayload)
+          });
+          if (resp.ok) {
+            item.sent = true;
+            syncedCount++;
+          }
+        } catch (err) {}
+      }
+
+      writeStorage(pocketLogs);
+      renderLogs();
+
+      const stillPending = pocketLogs.filter(x => !x.sent).length;
+      if (stillPending === 0) {
+        updateCloudBadge("☁️ All Synced", true);
+        if (syncedCount > 0) showToast(`☁️ Uploaded ${syncedCount} fill-up(s) to TSR Cloud!`);
+      } else {
+        updateCloudBadge(`📴 Queued (${stillPending})`, false);
+        if (manualTrigger) showToast(`Saved locally — ${stillPending} waiting for signal.`);
+      }
+    }
+
+    async function savePocketFuel(e) {
       e.preventDefault();
       const [vehicleId, nickname] = document.getElementById("p_vehicle").value.split("|");
       const entryDate = document.getElementById("p_date").value;
@@ -299,14 +351,13 @@
 
       const matchingIdx = pocketLogs.findIndex(x =>
         x.vehicleId === vehicleId &&
-        !x.sent &&
         (wantCombine || (x.date === entryDate && Math.abs((Number(x.meter) || 0) - entryMeter) <= 1))
       );
 
       let toastText = `Saved ${entry.gallons} gal for ${nickname}!`;
       if (matchingIdx !== -1 && (wantCombine || confirm(`Combine this ${entry.gallons} gal ($${entry.cost.toFixed(2)}) swipe with ${nickname}'s earlier ${pocketLogs[matchingIdx].gallons} gal ($${Number(pocketLogs[matchingIdx].cost).toFixed(2)}) swipe into ONE combined fill-up?`))) {
         const merged = mergeTwoPocketEntries(pocketLogs[matchingIdx], entry);
-        toastText = `Combined into 1 entry: ${merged.gallons} gal ($${merged.cost.toFixed(2)})!`;
+        toastText = `Combined: ${merged.gallons} gal ($${merged.cost.toFixed(2)})!`;
       } else {
         pocketLogs.unshift(entry);
       }
@@ -323,9 +374,10 @@
 
       renderLogs();
       showToast(toastText);
+      await syncQueueToCloud(false);
     }
 
-    function combineWithPreviousLog(idx) {
+    async function combineWithPreviousLog(idx) {
       const newer = pocketLogs[idx];
       if (!newer) return;
       const olderIdx = pocketLogs.findIndex((item, i) => i > idx && item.vehicleId === newer.vehicleId);
@@ -335,11 +387,16 @@
       }
       const older = pocketLogs[olderIdx];
       if (confirm(`Combine these two ${newer.nickname || newer.vehicleId} pump swipes into ONE entry?\n\n- Swipe 1: ${older.gallons} gal ($${Number(older.cost).toFixed(2)})\n- Swipe 2: ${newer.gallons} gal ($${Number(newer.cost).toFixed(2)})`)) {
+        const removedSyncId = newer.syncId;
         const merged = mergeTwoPocketEntries(older, newer);
         pocketLogs.splice(idx, 1);
         writeStorage(pocketLogs);
         renderLogs();
         showToast(`Combined: ${merged.gallons} gal ($${merged.cost.toFixed(2)})`);
+        if (navigator.onLine && removedSyncId) {
+          fetch(`${FIREBASE_DB_URL}/fuelLogs/${encodeURIComponent(removedSyncId)}.json`, { method: "DELETE" }).catch(() => {});
+        }
+        await syncQueueToCloud(false);
       }
     }
 
@@ -363,13 +420,6 @@
         `\n\nTSR_SYNC_BEGIN\n${JSON.stringify(payload)}\nTSR_SYNC_END`;
     }
 
-    function markAllSent() {
-      pocketLogs.forEach(x => x.sent = true);
-      writeStorage(pocketLogs);
-      renderLogs();
-      showToast("All entries marked as sent");
-    }
-
     async function shareSyncCode() {
       if (pocketLogs.length === 0) {
         alert("No fill-ups saved on this phone yet.");
@@ -379,7 +429,6 @@
       if (navigator.share) {
         try {
           await navigator.share({ title: "TSR Fuel Sync", text });
-          markAllSent();
           return;
         } catch (err) {
           if (err && err.name === "AbortError") return;
@@ -396,49 +445,16 @@
       const text = buildSyncText();
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {
-          markAllSent();
-          showToast("Sync code copied! Paste into text message.");
+          showToast("Sync code copied!");
         });
       } else {
         prompt("Copy this sync message:", text);
-        markAllSent();
       }
-    }
-
-    async function downloadSyncJSON() {
-      if (pocketLogs.length === 0) {
-        alert("No fill-ups saved on this phone yet.");
-        return;
-      }
-      const payload = buildSyncPayload();
-      const jsonStr = JSON.stringify(payload, null, 2);
-      const fileName = `tsr_mobile_fuel_${new Date().toISOString().split("T")[0]}.json`;
-
-      if (navigator.canShare && navigator.share) {
-        try {
-          const file = new File([jsonStr], fileName, { type: "application/json" });
-          if (navigator.canShare({ files: [file] })) {
-            await navigator.share({ title: fileName, files: [file] });
-            markAllSent();
-            showToast("Sync file shared!");
-            return;
-          }
-        } catch (err) {
-          if (err && err.name === "AbortError") return;
-        }
-      }
-
-      const blob = new Blob([jsonStr], { type: "application/json" });
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = fileName;
-      a.click();
-      markAllSent();
-      showToast("Sync JSON downloaded!");
     }
 
     function deletePocketLog(idx) {
-      if (confirm("Delete this entry from your phone?")) {
+      const item = pocketLogs[idx];
+      if (item && confirm("Delete this entry from your phone?")) {
         pocketLogs.splice(idx, 1);
         writeStorage(pocketLogs);
         renderLogs();
@@ -450,7 +466,7 @@
       const unsentCount = pocketLogs.filter(x => !x.sent).length;
       document.getElementById("logCount").innerText = pocketLogs.length;
       const badge = document.getElementById("unsyncedCountBadge");
-      badge.innerText = `${unsentCount} Unsent`;
+      badge.innerText = unsentCount > 0 ? `${unsentCount} Queued` : "0 Queued";
       badge.className = unsentCount > 0 ? "badge badge-new" : "badge badge-sent";
 
       if (pocketLogs.length === 0) {
@@ -467,7 +483,7 @@
           <div>
             <div style="font-weight:800; font-size:0.92rem;">
               ${l.nickname || l.vehicleId} • ${l.date}
-              <span class="badge ${l.sent ? 'badge-sent' : 'badge-new'}" style="margin-left:4px;">${l.sent ? 'Sent' : 'Unsent'}</span>
+              <span class="badge ${l.sent ? 'badge-sent' : 'badge-new'}" style="margin-left:4px;">${l.sent ? '☁️ Synced' : '⏳ Queued'}</span>
               ${splitBadge}
             </div>
             <div style="font-size:0.78rem; color:var(--muted); margin-top:2px;">
@@ -483,12 +499,17 @@
       }).join("");
     }
 
-    // Initialize today's date & default grade
     document.getElementById("p_date").value = new Date().toISOString().split("T")[0];
     onVehicleChange();
     renderLogs();
 
-    // Register Service Worker for 100% offline PWA caching
+    window.addEventListener("online", () => syncQueueToCloud(false));
+    window.addEventListener("offline", () => {
+      const pending = pocketLogs.filter(x => !x.sent).length;
+      updateCloudBadge(pending > 0 ? `📴 Offline (${pending} queued)` : "📴 Offline Ready", false);
+    });
+    syncQueueToCloud(false);
+
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", () => {
         navigator.serviceWorker.register("/sw.js").catch(() => {});
