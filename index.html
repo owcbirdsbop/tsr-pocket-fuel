@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0b0f17">
+  <link rel="manifest" href="/manifest.json">
   <title>TSR Pocket Fuel Logger</title>
   <style>
     :root {
@@ -204,7 +206,26 @@
 
   <script>
     const STORAGE_KEY = "tsr_pocket_fuel_v1";
-    let pocketLogs = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+    let memoryBackup = [];
+
+    function readStorage() {
+      try {
+        return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+      } catch (e) {
+        return memoryBackup;
+      }
+    }
+
+    function writeStorage(data) {
+      memoryBackup = data;
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      } catch (e) {
+        // Fallback to in-memory array if storage is restricted
+      }
+    }
+
+    let pocketLogs = readStorage();
 
     function showToast(msg) {
       const el = document.getElementById("toastMsg");
@@ -276,7 +297,6 @@
         sent: false
       };
 
-      // Look for an existing unsent entry for the same vehicle on the same date (or same odometer)
       const matchingIdx = pocketLogs.findIndex(x =>
         x.vehicleId === vehicleId &&
         !x.sent &&
@@ -291,9 +311,8 @@
         pocketLogs.unshift(entry);
       }
 
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(pocketLogs));
+      writeStorage(pocketLogs);
 
-      // Keep selected vehicle & date, clear numeric fields
       document.getElementById("p_meter").value = "";
       document.getElementById("p_gallons").value = "";
       document.getElementById("p_ppg").value = "";
@@ -307,7 +326,6 @@
     }
 
     function combineWithPreviousLog(idx) {
-      // Combine pocketLogs[idx] with the next older entry for the same vehicle
       const newer = pocketLogs[idx];
       if (!newer) return;
       const olderIdx = pocketLogs.findIndex((item, i) => i > idx && item.vehicleId === newer.vehicleId);
@@ -316,13 +334,10 @@
         return;
       }
       const older = pocketLogs[olderIdx];
-      if (confirm(`Combine these two ${newer.nickname || newer.vehicleId} pump swipes into ONE entry?
-
-• Swipe 1: ${older.gallons} gal ($${Number(older.cost).toFixed(2)})
-• Swipe 2: ${newer.gallons} gal ($${Number(newer.cost).toFixed(2)})`)) {
+      if (confirm(`Combine these two ${newer.nickname || newer.vehicleId} pump swipes into ONE entry?\n\n- Swipe 1: ${older.gallons} gal ($${Number(older.cost).toFixed(2)})\n- Swipe 2: ${newer.gallons} gal ($${Number(newer.cost).toFixed(2)})`)) {
         const merged = mergeTwoPocketEntries(older, newer);
         pocketLogs.splice(idx, 1);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(pocketLogs));
+        writeStorage(pocketLogs);
         renderLogs();
         showToast(`Combined: ${merged.gallons} gal ($${merged.cost.toFixed(2)})`);
       }
@@ -343,20 +358,14 @@
       const summaryLines = payload.fuelLogs.map(l =>
         `• ${l.nickname || l.vehicleId} (${l.date}): ${l.gallons} gal @ $${Number(l.pricePerGal).toFixed(3)} = $${Number(l.cost).toFixed(2)} | Odo: ${l.meter} (${l.fullTank ? "Full" : "Partial"})`
       );
-      return `TSR FUEL SYNC (${payload.fuelLogs.length} fill-up${payload.fuelLogs.length === 1 ? "" : "s"}):
-` +
-        summaryLines.join("
-") +
-        `
-
-TSR_SYNC_BEGIN
-${JSON.stringify(payload)}
-TSR_SYNC_END`;
+      return `TSR FUEL SYNC (${payload.fuelLogs.length} fill-up${payload.fuelLogs.length === 1 ? "" : "s"}):\n` +
+        summaryLines.join("\n") +
+        `\n\nTSR_SYNC_BEGIN\n${JSON.stringify(payload)}\nTSR_SYNC_END`;
     }
 
     function markAllSent() {
       pocketLogs.forEach(x => x.sent = true);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(pocketLogs));
+      writeStorage(pocketLogs);
       renderLogs();
       showToast("All entries marked as sent");
     }
@@ -396,16 +405,33 @@ TSR_SYNC_END`;
       }
     }
 
-    function downloadSyncJSON() {
+    async function downloadSyncJSON() {
       if (pocketLogs.length === 0) {
         alert("No fill-ups saved on this phone yet.");
         return;
       }
       const payload = buildSyncPayload();
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const jsonStr = JSON.stringify(payload, null, 2);
+      const fileName = `tsr_mobile_fuel_${new Date().toISOString().split("T")[0]}.json`;
+
+      if (navigator.canShare && navigator.share) {
+        try {
+          const file = new File([jsonStr], fileName, { type: "application/json" });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({ title: fileName, files: [file] });
+            markAllSent();
+            showToast("Sync file shared!");
+            return;
+          }
+        } catch (err) {
+          if (err && err.name === "AbortError") return;
+        }
+      }
+
+      const blob = new Blob([jsonStr], { type: "application/json" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = `tsr_mobile_fuel_${new Date().toISOString().split("T")[0]}.json`;
+      a.download = fileName;
       a.click();
       markAllSent();
       showToast("Sync JSON downloaded!");
@@ -414,7 +440,7 @@ TSR_SYNC_END`;
     function deletePocketLog(idx) {
       if (confirm("Delete this entry from your phone?")) {
         pocketLogs.splice(idx, 1);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(pocketLogs));
+        writeStorage(pocketLogs);
         renderLogs();
       }
     }
@@ -461,6 +487,13 @@ TSR_SYNC_END`;
     document.getElementById("p_date").value = new Date().toISOString().split("T")[0];
     onVehicleChange();
     renderLogs();
+
+    // Register Service Worker for 100% offline PWA caching
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("/sw.js").catch(() => {});
+      });
+    }
   </script>
 </body>
 </html>
