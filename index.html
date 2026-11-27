@@ -206,11 +206,19 @@
 
   <script>
     function getLocalTodayISO() {
-      const now = new Date();
-      const y = now.getFullYear();
-      const m = String(now.getMonth() + 1).padStart(2, "0");
-      const d = String(now.getDate()).padStart(2, "0");
-      return `${y}-${m}-${d}`;
+      try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const activeTz = (!tz || tz === "UTC" || tz === "Etc/UTC" || tz === "GMT") ? "America/Chicago" : tz;
+        return new Intl.DateTimeFormat("en-CA", {
+          timeZone: activeTz,
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit"
+        }).format(new Date());
+      } catch (e) {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      }
     }
 
     const FIREBASE_DB_URL = "https://tsr-fleet-sync-default-rtdb.firebaseio.com";
@@ -357,13 +365,12 @@
         sent: false
       };
 
-      const matchingIdx = pocketLogs.findIndex(x =>
-        x.vehicleId === vehicleId &&
-        (wantCombine || (x.date === entryDate && Math.abs((Number(x.meter) || 0) - entryMeter) <= 1))
-      );
+      const matchingIdx = wantCombine
+        ? pocketLogs.findIndex(x => x.vehicleId === vehicleId)
+        : -1;
 
       let toastText = `Saved ${entry.gallons} gal for ${nickname}!`;
-      if (matchingIdx !== -1 && (wantCombine || confirm(`Combine this ${entry.gallons} gal ($${entry.cost.toFixed(2)}) swipe with ${nickname}'s earlier ${pocketLogs[matchingIdx].gallons} gal ($${Number(pocketLogs[matchingIdx].cost).toFixed(2)}) swipe into ONE combined fill-up?`))) {
+      if (matchingIdx !== -1) {
         const merged = mergeTwoPocketEntries(pocketLogs[matchingIdx], entry);
         toastText = `Combined: ${merged.gallons} gal ($${merged.cost.toFixed(2)})!`;
       } else {
@@ -508,6 +515,11 @@
     }
 
     document.getElementById("p_date").value = getLocalTodayISO();
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && !document.getElementById("p_gallons").value) {
+        document.getElementById("p_date").value = getLocalTodayISO();
+      }
+    });
     onVehicleChange();
     renderLogs();
 
