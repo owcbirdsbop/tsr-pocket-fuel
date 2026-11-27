@@ -64,7 +64,6 @@
     .sync-box {
       background: #0d131d; border: 1px solid #1e3a5f; border-radius: 10px; padding: 12px;
     }
-    .sync-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
     .log-item {
       background: #0d131d; border: 1px solid var(--border); border-radius: 8px;
       padding: 10px 12px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; gap: 10px;
@@ -207,19 +206,15 @@
     <div id="fleetMpgHistoryList"></div>
   </div>
 
-  <!-- CLOUD DEPOT & BACKUP SYNC -->
+  <!-- CLOUD DEPOT SYNC -->
   <div class="card">
     <div class="card-title">☁️ TSR Cloud Depot Sync</div>
     <div class="sync-box">
       <p style="font-size:0.82rem; color:var(--muted); line-height:1.45;">
         Entries upload automatically to your <strong>TSR Cloud Depot</strong> whenever you have signal—and queue safely on this phone when offline until signal returns.
       </p>
-      <div style="margin-top:10px; display:flex; flex-direction:column; gap:8px;">
+      <div style="margin-top:10px;">
         <button type="button" class="btn btn-green" onclick="syncQueueToCloud(true)">☁️ Sync Pending to Cloud Now</button>
-        <div class="sync-actions">
-          <button type="button" class="btn btn-secondary" onclick="shareSyncCode()">📤 Text Backup</button>
-          <button type="button" class="btn btn-secondary" onclick="copySyncCode()">📋 Copy Code</button>
-        </div>
       </div>
     </div>
   </div>
@@ -296,7 +291,6 @@
       const [vId, , defaultGrade] = val.split("|");
       document.getElementById("p_grade").value = defaultGrade || "87 Regular";
 
-      // Hint the last known odometer for this vehicle from TSR history or local logs
       const histVeh = (fleetHistoryCache.vehicleMeters || {})[vId];
       const localLatest = pocketLogs.find(x => x.vehicleId === vId);
       const lastMeter = Math.max(Number(histVeh?.meter) || 0, Number(localLatest?.meter) || 0);
@@ -360,7 +354,6 @@
       const histMeta = (fleetHistoryCache.vehicleMeters || {})[vId];
       const isHours = histMeta && histMeta.metric === "Hours";
 
-      // Combine TSR desktop history + any local phone logs not yet merged into desktop history
       const baseLogs = (fleetHistoryCache.fuelLogs || []).filter(x => x.vehicleId === vId);
       const localLogs = pocketLogs.filter(x => x.vehicleId === vId);
 
@@ -382,7 +375,6 @@
         return;
       }
 
-      // Sort oldest -> newest to compute exact Full-Tank-to-Full-Tank MPG
       const asc = [...combined].sort((a, b) => {
         const mDiff = (Number(a.meter) || 0) - (Number(b.meter) || 0);
         if (mDiff !== 0) return mDiff;
@@ -445,7 +437,6 @@
       document.getElementById("histBestMpg").innerText = mpgValues.length > 0 ? Math.max(...mpgValues).toFixed(2) : "--";
       document.getElementById("histLastMpg").innerText = mpgValues.length > 0 ? mpgValues[mpgValues.length - 1].toFixed(2) : "--";
 
-      // Show newest 8 fill-ups
       const recent = annotated.reverse().slice(0, 8);
       listEl.innerHTML = recent.map(r => `
         <div class="log-item" style="padding:8px 10px; margin-bottom:6px;">
@@ -581,58 +572,6 @@
           fetch(`${FIREBASE_DB_URL}/fuelLogs/${encodeURIComponent(removedSyncId)}.json`, { method: "DELETE" }).catch(() => {});
         }
         await syncQueueToCloud(false);
-      }
-    }
-
-    function buildSyncPayload() {
-      const unsent = pocketLogs.filter(x => !x.sent);
-      const listToSend = unsent.length > 0 ? unsent : pocketLogs;
-      return {
-        tsrMobileSync: 1,
-        exportedAt: new Date().toISOString(),
-        fuelLogs: listToSend.map(({ sent, ...rest }) => rest)
-      };
-    }
-
-    function buildSyncText() {
-      const payload = buildSyncPayload();
-      const summaryLines = payload.fuelLogs.map(l =>
-        `• ${l.nickname || l.vehicleId} (${l.date}): ${l.gallons} gal @ $${Number(l.pricePerGal).toFixed(3)} = $${Number(l.cost).toFixed(2)} | Odo: ${l.meter} (${l.fullTank ? "Full" : "Partial"})`
-      );
-      return `TSR FUEL SYNC (${payload.fuelLogs.length} fill-up${payload.fuelLogs.length === 1 ? "" : "s"}):\n` +
-        summaryLines.join("\n") +
-        `\n\nTSR_SYNC_BEGIN\n${JSON.stringify(payload)}\nTSR_SYNC_END`;
-    }
-
-    async function shareSyncCode() {
-      if (pocketLogs.length === 0) {
-        alert("No fill-ups saved on this phone yet.");
-        return;
-      }
-      const text = buildSyncText();
-      if (navigator.share) {
-        try {
-          await navigator.share({ title: "TSR Fuel Sync", text });
-          return;
-        } catch (err) {
-          if (err && err.name === "AbortError") return;
-        }
-      }
-      copySyncCode();
-    }
-
-    function copySyncCode() {
-      if (pocketLogs.length === 0) {
-        alert("No fill-ups saved on this phone yet.");
-        return;
-      }
-      const text = buildSyncText();
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(() => {
-          showToast("Sync code copied!");
-        });
-      } else {
-        prompt("Copy this sync message:", text);
       }
     }
 
